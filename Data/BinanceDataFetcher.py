@@ -19,8 +19,8 @@ class BinanceDataFetcher:
 
         self.start_date = str(start_date)
         self.end_date = str(end_date)
-        self.db_name = r"C:\Users\321ms\Desktop\Binance\BinanceData.db"
-        self.table_name = "binance"+ "_" + self.symbol.upper() + "_" + self.time_horizon
+        self.db_name = r"C:\Users\321ms\Desktop\Binance\db\BinanceData.db"
+        self.table_name = "binance"+ "_" + self.symbol.lower() + "_" + self.time_horizon.lower()
 
     def _get_interval(self):
         try:
@@ -40,22 +40,20 @@ class BinanceDataFetcher:
         )
 
         columns = [
-            'DateTime', 'Open', 'High', 'Low', 'Close', 'Volume',
+            'datetime', 'open', 'high', 'low', 'close', 'volume',
             'Close Time', 'Quote Asset Volume', 'Number of trades',
             'Taker buy base asset volume', 'Taker buy quote asset volume', 'Ignore'
         ]
         data = pd.DataFrame(historical_data, columns=columns)
 
-        data['Open Time UTC'] = pd.to_datetime(data['DateTime'], unit='ms', utc=True)
+        data['Open Time UTC'] = pd.to_datetime(data['datetime'], unit='ms', utc=True)
         data['Close Time UTC'] = pd.to_datetime(data['Close Time'], unit='ms', utc=True)
-        data['DateTime'] = data['Open Time UTC']
+        data['datetime'] = data['Open Time UTC']
         data['Close Time'] = data['Close Time UTC']
-        data['Open'] = round(data['Open'], 2)
-        data['Close'] = round(data['Close'], 2)
-        data['High'] = round(data['High'], 2)
-        data['Low'] = round(data['Low'], 2)
+        for col in ['open', 'close', 'high', 'low', 'volume']:
+            data[col] = data[col].astype(float).round(2)
         df = data.drop(columns=[
-            'Volume', 'Close Time', 'Quote Asset Volume', 'Number of trades',
+            'Close Time', 'Quote Asset Volume', 'Number of trades',
             'Taker buy base asset volume', 'Taker buy quote asset volume', 'Ignore',
             'Open Time UTC', 'Close Time UTC'
         ])
@@ -69,24 +67,69 @@ class BinanceDataFetcher:
 
         return df
     
-    def get_entries_before_hours(self, hours_ago, timestamp_column= "DateTime"):
-        time_threshold = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).strftime('%Y-%m-%d %H:%M:%S')
-        conn = sqlite3.connect(self.db_name)
-
-
-        query = f"""
-            SELECT *
-            FROM {self.table_name}
-            WHERE {timestamp_column} >= ?
+    def load_data_from_db(self):
         """
-
-        df = pd.read_sql_query(query, conn, params=(time_threshold,))
-
+        Load data from the SQLite table into a DataFrame.
+        Returns:
+            pd.DataFrame: Loaded DataFrame from the table.
+        """
+        conn = sqlite3.connect(self.db_name)
+        query = f"SELECT * FROM {self.table_name}"
+        df = pd.read_sql_query(query, conn)
         conn.close()
+
+        # Ensure datetime column is parsed correctly
+        if 'datetime' in df.columns:
+            df['datetime'] = pd.to_datetime(df['datetime'], utc=True)
+
         return df
+    
+    def resample_data(self, rule='H'):
+        """
+        Resample minute-level OHLCV data into larger timeframes.
+
+        Parameters:
+        - df: pd.DataFrame with columns ['DateTime', 'Open', 'High', 'Low', 'Close', 'Volume']
+            'DateTime' must be datetime64 and set as index or convertible.
+        - rule: pandas offset alias string e.g. 'H' for hourly, 'D' for daily, '15T' for 15 minutes
+
+        Returns:
+        - resampled DataFrame with OHLCV aggregated properly, rounded to 2 decimals.
+        """
+        # Ensure 'DateTime' is datetime and set as index
+        df = self.load_data_from_db()
+        df = df.copy()
+        if not pd.api.types.is_datetime64_any_dtype(df['datetime']):
+            df['datetime'] = pd.to_datetime(df['datetime'], utc=True)
+        df.set_index('datetime', inplace=True)
+
+        ohlc_dict = {
+            'open': 'first',
+            'high': 'max',
+            'low': 'min',
+            'close': 'last',
+            'volume': 'sum'
+        }
+
+        resampled = df.resample(rule).agg(ohlc_dict)
+
+        # Drop intervals with no data (e.g., last incomplete interval)
+        resampled.dropna(subset=['open', 'close'], inplace=True)
+
+        # Round prices to 2 decimals
+        for col in ['open', 'high', 'low', 'close']:
+            resampled[col] = resampled[col].round(2)
+
+        # Round volume (if you want, or keep raw)
+        resampled['volume'] = resampled['volume'].round(6)  # or int, or leave as is
+
+        # Reset index to bring 'DateTime' back as column
+        resampled = resampled.reset_index()
+
+        return resampled
 
 if __name__ == "__main__":
     fetcher = BinanceDataFetcher(symbol="btc", time_horizon="1MINUTE", start_date=datetime(2024, 7, 9), end_date="now")
     #df = fetcher.fetch_data()
-    df2 = fetcher.get_entries_before_hours(4)
+    df2 = fetcher.resample_data('H')
     df2.to_csv("abc.csv")
