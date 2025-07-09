@@ -2,6 +2,7 @@ import os
 from binance.client import Client
 import datetime
 import pandas as pd
+import sqlite3
 
 
 class BinanceDataFetcher:
@@ -17,8 +18,6 @@ class BinanceDataFetcher:
         self.interval = self._get_interval()
 
         self.start_date = str(start_date)
-        if self.end_date == "":
-            self.end_date = "now"
         self.end_date = str(end_date)
 
     def _get_interval(self):
@@ -29,6 +28,8 @@ class BinanceDataFetcher:
             raise ValueError(f"Invalid time horizon: {self.time_horizon}")
 
     def fetch_data(self):
+        if self.end_date == "":
+            self.end_date = "now"
         historical_data = self.client.get_historical_klines(
             symbol=self.symbol,
             interval=self.interval,
@@ -57,7 +58,11 @@ class BinanceDataFetcher:
         if self.end_date == "now":
             df.drop(df.index[-1], inplace=True)
 
-        df.to_csv('btc_data.csv', index=False)
+        db_name = "BinanceData.db"
+        conn = sqlite3.connect(db_name)
+
+        table_name = self.symbol.upper() + "_" + self.time_horizon + "_" + str(self.start_date) + "_" + str(self.end_date)
+        df.to_sql(table_name, conn, if_exists='replace', index=False)
 
         return df
 
