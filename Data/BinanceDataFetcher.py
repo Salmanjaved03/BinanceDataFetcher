@@ -1,6 +1,6 @@
 import os
 from binance.client import Client
-import datetime
+from datetime import datetime, timezone, timedelta
 import pandas as pd
 import sqlite3
 
@@ -19,6 +19,8 @@ class BinanceDataFetcher:
 
         self.start_date = str(start_date)
         self.end_date = str(end_date)
+        self.db_name = r"C:\Users\321ms\Desktop\Binance\BinanceData.db"
+        self.table_name = "binance"+ "_" + self.symbol.upper() + "_" + self.time_horizon
 
     def _get_interval(self):
         try:
@@ -38,17 +40,20 @@ class BinanceDataFetcher:
         )
 
         columns = [
-            'Open Time', 'Open', 'High', 'Low', 'Close', 'Volume',
+            'DateTime', 'Open', 'High', 'Low', 'Close', 'Volume',
             'Close Time', 'Quote Asset Volume', 'Number of trades',
             'Taker buy base asset volume', 'Taker buy quote asset volume', 'Ignore'
         ]
         data = pd.DataFrame(historical_data, columns=columns)
 
-        data['Open Time UTC'] = pd.to_datetime(data['Open Time'], unit='ms', utc=True)
+        data['Open Time UTC'] = pd.to_datetime(data['DateTime'], unit='ms', utc=True)
         data['Close Time UTC'] = pd.to_datetime(data['Close Time'], unit='ms', utc=True)
-        data['Open Time'] = data['Open Time UTC']
+        data['DateTime'] = data['Open Time UTC']
         data['Close Time'] = data['Close Time UTC']
-
+        data['Open'] = round(data['Open'], 2)
+        data['Close'] = round(data['Close'], 2)
+        data['High'] = round(data['High'], 2)
+        data['Low'] = round(data['Low'], 2)
         df = data.drop(columns=[
             'Volume', 'Close Time', 'Quote Asset Volume', 'Number of trades',
             'Taker buy base asset volume', 'Taker buy quote asset volume', 'Ignore',
@@ -58,14 +63,30 @@ class BinanceDataFetcher:
         if self.end_date == "now":
             df.drop(df.index[-1], inplace=True)
 
-        db_name = "BinanceData.db"
-        conn = sqlite3.connect(db_name)
+        conn = sqlite3.connect(self.db_name)
 
-        table_name = self.symbol.upper() + "_" + self.time_horizon + "_" + str(self.start_date) + "_" + str(self.end_date)
-        df.to_sql(table_name, conn, if_exists='replace', index=False)
+        df.to_sql(self.table_name, conn, if_exists='replace', index=False)
 
+        return df
+    
+    def get_entries_before_hours(self, hours_ago, timestamp_column= "DateTime"):
+        time_threshold = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).strftime('%Y-%m-%d %H:%M:%S')
+        conn = sqlite3.connect(self.db_name)
+
+
+        query = f"""
+            SELECT *
+            FROM {self.table_name}
+            WHERE {timestamp_column} >= ?
+        """
+
+        df = pd.read_sql_query(query, conn, params=(time_threshold,))
+
+        conn.close()
         return df
 
 if __name__ == "__main__":
-    fetcher = BinanceDataFetcher(symbol="doge", time_horizon="1DAY", start_date=datetime.datetime(2025, 7, 5), end_date="now")
-    df = fetcher.fetch_data()
+    fetcher = BinanceDataFetcher(symbol="btc", time_horizon="1MINUTE", start_date=datetime(2024, 7, 9), end_date="now")
+    #df = fetcher.fetch_data()
+    df2 = fetcher.get_entries_before_hours(4)
+    df2.to_csv("abc.csv")
