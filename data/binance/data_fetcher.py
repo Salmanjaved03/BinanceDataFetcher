@@ -3,9 +3,10 @@ from binance.client import Client
 from datetime import datetime, timezone, timedelta
 import pandas as pd
 import sqlite3
-from sklearn.preprocessing import StandardScaler,MinMaxScaler,OrdinalEncoder,OneHotEncoder
-from sklearn.impute import SimpleImputer
-import numpy as np
+import os
+import sys
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 
 class BinanceDataFetcher:
     def __init__(self, exchange, symbol, time_horizon, start_date, end_date):
@@ -22,7 +23,7 @@ class BinanceDataFetcher:
 
         self.start_date = str(start_date)
         self.end_date = str(end_date)
-        self.db_name = r"C:\Users\321ms\Desktop\Binance\db\data.db"
+        self.db_name = r"db\data.db"
         self.table_name = self.exchange + "_" + self.symbol.lower() + "_" + self.time_horizon.lower()
 
     def _get_interval(self):

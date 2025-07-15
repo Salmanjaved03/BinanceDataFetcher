@@ -1,17 +1,15 @@
 from pybit.unified_trading import HTTP
 import pandas as pd
 import time
-import time
 import sqlite3
-from sklearn.preprocessing import StandardScaler,MinMaxScaler,OrdinalEncoder,OneHotEncoder
-from sklearn.impute import SimpleImputer
-import numpy as np
 import requests 
 import json 
 import datetime as dt
-import matplotlib.pyplot as plt
-import qgrid
 import time
+import sys
+import os
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 class BybitDataFetcher:
     def __init__(self, exchange, symbol, time_horizon, start_date, end_date):
@@ -34,7 +32,7 @@ class BybitDataFetcher:
 
         self.end_date = end_date
         
-        self.db_name = r"C:\Users\321ms\Desktop\Binance\db\data.db"
+        self.db_name = r"db\data.db"
         self.table_name = self.exchange + "_" + self.symbol.lower() + "_" + self.time_horizon.lower()
         
     def _get_interval(self):
