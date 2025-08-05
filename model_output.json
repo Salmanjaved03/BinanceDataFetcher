@@ -1,0 +1,14 @@
+{
+    "model_data": "gASVcwIAAAAAAACMGnNrbGVhcm4ubGluZWFyX21vZGVsLl9iYXNllIwQTGluZWFyUmVncmVzc2lvbpSTlCmBlH2UKIwNZml0X2ludGVyY2VwdJSIjAZjb3B5X1iUiIwGbl9qb2JzlE6MCHBvc2l0aXZllImMEWZlYXR1cmVfbmFtZXNfaW5flIwVbnVtcHkuY29yZS5tdWx0aWFycmF5lIwMX3JlY29uc3RydWN0lJOUjAVudW1weZSMB25kYXJyYXmUk5RLAIWUQwFilIeUUpQoSwFLBYWUaA2MBWR0eXBllJOUjAJPOJSJiIeUUpQoSwOMAXyUTk5OSv////9K/////0s/dJRiiV2UKIwKcGFzdF9yZXRfMZSMCnBhc3RfcmV0XzOUjApwYXN0X3JldF81lIwKdm9sYXRpbGl0eZSMDXZvbHVtZV9jaGFuZ2WUZXSUYowObl9mZWF0dXJlc19pbl+USwWMBWNvZWZflGgMaA9LAIWUaBGHlFKUKEsBSwWFlGgWjAJmOJSJiIeUUpQoSwOMATyUTk5OSv////9K/////0sAdJRiiUMo1nIkFj/+lT8zzJw/Pe3BP89K/lYHXsS/d70Ue4mVBkCAhdkmlilRP5R0lGKMBXJhbmtflEsFjAlzaW5ndWxhcl+UaAxoD0sAhZRoEYeUUpQoSwFLBYWUaCuJQygyjBaQUbhBQAbGwrfjAeY/Rh6ZTUo3zz9kkfWTeB7IPwTC2oM3pqE/lHSUYowKaW50ZXJjZXB0X5RoCowGc2NhbGFylJOUaCtDCIUqxQQvOpm/lIaUUpSMEF9za2xlYXJuX3ZlcnNpb26UjAUxLjQuMpR1Yi4=",
+    "feature_cols": [
+        "past_ret_1",
+        "past_ret_3",
+        "past_ret_5",
+        "volatility",
+        "volume_change"
+    ],
+    "training_timestamp": "2025-08-01T12:18:42.773413",
+    "training_rows": 965,
+    "lookback": 30,
+    "forward_period": 5
+}

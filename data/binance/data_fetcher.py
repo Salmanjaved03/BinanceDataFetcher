@@ -6,7 +6,8 @@ import sqlite3
 import os
 import sys
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
+
 
 class BinanceDataFetcher:
     def __init__(self, exchange, symbol, time_horizon, start_date, end_date):
@@ -24,7 +25,9 @@ class BinanceDataFetcher:
         self.start_date = str(start_date)
         self.end_date = str(end_date)
         self.db_name = r"db\data.db"
-        self.table_name = self.exchange + "_" + self.symbol.lower() + "_" + self.time_horizon.lower()
+        self.table_name = (
+            self.exchange + "_" + self.symbol.lower() + "_" + self.time_horizon.lower()
+        )
 
     def _get_interval(self):
         try:
@@ -37,40 +40,56 @@ class BinanceDataFetcher:
         if self.end_date == "":
             self.end_date = "now"
         historical_data = self.client.get_historical_klines(
-            symbol=self.symbol+"USDT",
+            symbol=self.symbol + "USDT",
             interval=self.interval,
-            start_str=self.start_date, 
-            end_str=self.end_date
+            start_str=self.start_date,
+            end_str=self.end_date,
         )
 
         columns = [
-            'datetime', 'open', 'high', 'low', 'close', 'volume',
-            'Close Time', 'Quote Asset Volume', 'Number of trades',
-            'Taker buy base asset volume', 'Taker buy quote asset volume', 'Ignore'
+            "datetime",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "Close Time",
+            "Quote Asset Volume",
+            "Number of trades",
+            "Taker buy base asset volume",
+            "Taker buy quote asset volume",
+            "Ignore",
         ]
         data = pd.DataFrame(historical_data, columns=columns)
 
-        data['Open Time UTC'] = pd.to_datetime(data['datetime'], unit='ms', utc=True)
-        data['Close Time UTC'] = pd.to_datetime(data['Close Time'], unit='ms', utc=True)
-        data['datetime'] = data['Open Time UTC']
-        data['Close Time'] = data['Close Time UTC']
-        for col in ['open', 'close', 'high', 'low', 'volume']:
+        data["Open Time UTC"] = pd.to_datetime(data["datetime"], unit="ms", utc=True)
+        data["Close Time UTC"] = pd.to_datetime(data["Close Time"], unit="ms", utc=True)
+        data["datetime"] = data["Open Time UTC"]
+        data["Close Time"] = data["Close Time UTC"]
+        for col in ["open", "close", "high", "low", "volume"]:
             data[col] = data[col].astype(float).round(2)
-        df = data.drop(columns=[
-            'Close Time', 'Quote Asset Volume', 'Number of trades',
-            'Taker buy base asset volume', 'Taker buy quote asset volume', 'Ignore',
-            'Open Time UTC', 'Close Time UTC'
-        ])
+        df = data.drop(
+            columns=[
+                "Close Time",
+                "Quote Asset Volume",
+                "Number of trades",
+                "Taker buy base asset volume",
+                "Taker buy quote asset volume",
+                "Ignore",
+                "Open Time UTC",
+                "Close Time UTC",
+            ]
+        )
 
         if self.end_date == "now":
             df.drop(df.index[-1], inplace=True)
 
         conn = sqlite3.connect(self.db_name)
 
-        df.to_sql(self.table_name, conn, if_exists='replace', index=False)
+        df.to_sql(self.table_name, conn, if_exists="replace", index=False)
 
         return df
-    
+
     def load_data_from_db(self):
         """
         Load data from the SQLite table into a DataFrame.
@@ -83,7 +102,7 @@ class BinanceDataFetcher:
         conn.close()
 
         # Ensure datetime column is parsed correctly
-        if 'datetime' in df.columns:
-            df['datetime'] = pd.to_datetime(df['datetime'], utc=True)
+        if "datetime" in df.columns:
+            df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
 
         return df

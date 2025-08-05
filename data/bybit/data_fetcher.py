@@ -1,124 +1,276 @@
-from pybit.unified_trading import HTTP
-import pandas as pd
-import time
-import sqlite3
-import requests 
-import json 
-import datetime as dt
-import time
-import sys
 import os
+import sys
+import time
+import pandas as pd
+import configparser
+from datetime import datetime, timezone
+from sqlalchemy import create_engine, text
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from pybit.unified_trading import HTTP  # Bybit official SDK
+
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
 
 class BybitDataFetcher:
-    def __init__(self, exchange, symbol, time_horizon, start_date, end_date):
+    def __init__(self):
+        config = configparser.ConfigParser()
+        config_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "data", "bybit", "config.ini"
+        )
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(
+                f"Config file not found at: {os.path.abspath(config_path)}"
+            )
+        config.read(config_path)
 
-        self.api_key="7nSCb7NvaHogh40lKy"
-        self.api_secret="TnpKWNaNWHGqODZY18CmO4nKaOcMdGyHmCaw"
+        if "DATA" not in config:
+            raise KeyError("Section 'DATA' not found in config.ini")
 
-        self.client = HTTP(
-            testnet=False,
-            api_key=self.api_key,
-            api_secret=self.api_secret
+        self.symbol = config["DATA"]["symbol"].strip().upper()  # e.g., BTC/USDT
+        self.exchange_name = config["DATA"]["exchange"]
+        self.time_horizon = config["DATA"]["time_horizon"]
+        self.start_date = config["DATA"]["start_date"]
+        self.end_date = config["DATA"]["end_date"]
+        self.market_type = config["DATA"].get("market_type", "future")
+
+        # Validate ISO 8601 dates
+        self._validate_dates()
+
+        # Setup Bybit testnet session
+        self.session = HTTP(testnet=False, api_key="", api_secret="")
+
+    def fetch_recent_data(
+        self,
+        db_params: dict,
+        schema: str = "bybit_data",
+        table_name: str = "btc_usdt_1min",
+    ) -> pd.DataFrame:
+        # Connect to DB and get latest timestamp
+        db_url = (
+            f"postgresql+psycopg2://{db_params['user']}:{db_params['password']}"
+            f"@{db_params['host']}:{db_params['port']}/{db_params['dbname']}"
+        )
+        engine = create_engine(db_url)
+
+        with engine.connect() as conn:
+            result = conn.execute(
+                text(
+                    f"""
+                    SELECT MAX(datetime) FROM {schema}.{table_name}
+                """
+                )
+            )
+            last_dt = result.scalar()
+
+        if last_dt is None:
+            print("⚠️ No previous data found. Falling back to config start_date.")
+            self._validate_dates()  # fallback to config start/end
+            return self.fetch_bybit_ohlcv()
+
+        # Update start_ms to last timestamp + 1 interval
+        interval_ms = self.interval_to_milliseconds(self.time_horizon)
+        self.start_ms = int(pd.Timestamp(last_dt).timestamp() * 1000) + interval_ms
+        self.end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+        print(
+            f"Fetching new data from: {pd.to_datetime(self.start_ms, unit='ms', utc=True)}"
+        )
+        return self.fetch_bybit_ohlcv()
+
+    def _validate_dates(self):
+        try:
+            if not self.start_date:
+                raise ValueError("start_date is empty in config.ini")
+            self.start_ms = int(
+                datetime.fromisoformat(
+                    self.start_date.replace("Z", "+00:00")
+                ).timestamp()
+                * 1000
+            )
+        except Exception as e:
+            raise ValueError(f"Invalid start_date format: {e}")
+
+        if self.end_date.lower() == "now":
+            self.end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        else:
+            try:
+                self.end_ms = int(
+                    datetime.fromisoformat(
+                        self.end_date.replace("Z", "+00:00")
+                    ).timestamp()
+                    * 1000
+                )
+            except Exception as e:
+                raise ValueError(f"Invalid end_date format: {e}")
+
+    def interval_to_milliseconds(self, interval):
+        # Supports m, h, d
+        unit = interval[-1]
+        amount = int(interval[:-1])
+        if unit == "m":
+            return amount * 60 * 1000
+        elif unit == "h":
+            return amount * 60 * 60 * 1000
+        elif unit == "d":
+            return amount * 24 * 60 * 60 * 1000
+        else:
+            raise ValueError(f"Unsupported interval unit: {unit}")
+
+    def fetch_bybit_ohlcv(self, limit=1000) -> pd.DataFrame:
+        category_map = {
+            "spot": "spot",
+            "future": "linear",  # USDT perpetual
+            "linear": "linear",
+            "inverse": "inverse",
+        }
+        category = category_map.get(self.market_type.lower(), "linear")
+        symbol_formatted = self.symbol.replace("/", "")
+        all_data = []
+        start_ms = self.start_ms
+        interval_ms = self.interval_to_milliseconds(self.time_horizon)
+        print(
+            f"Fetching {symbol_formatted} on {category} from {self.start_date} to {self.end_date}..."
         )
 
-        self.symbol = symbol.upper()
+        while start_ms < self.end_ms:
+            try:
+                response = self.session.get_kline(
+                    category=category,
+                    symbol=symbol_formatted,
+                    interval=self.time_horizon.replace("m", ""),
+                    start=start_ms,
+                    limit=limit,
+                )
+                candles = response["result"]["list"]
+                if not candles:
+                    print("No more data returned by API.")
+                    break
 
-        self.time_horizon = time_horizon.upper()
-        self.exchange = exchange
+                candles_sorted = sorted(candles, key=lambda x: int(x[0]))
+                for c in candles_sorted:
+                    timestamp = int(c[0])
+                    if timestamp > self.end_ms:
+                        break
+                    all_data.append(
+                        [
+                            timestamp,
+                            float(c[1]),  # open
+                            float(c[2]),  # high
+                            float(c[3]),  # low
+                            float(c[4]),  # close
+                            float(c[5]),  # volume
+                        ]
+                    )
 
-        self.start_date = start_date
+                last_ts = int(candles_sorted[-1][0])
+                print(
+                    f"Fetched {len(candles_sorted)} rows up to {pd.to_datetime(last_ts, unit='ms', utc=True)}"
+                )
+                start_ms = last_ts + interval_ms
+                time.sleep(0.2)
 
-        self.end_date = end_date
-        
-        self.db_name = r"db\data.db"
-        self.table_name = self.exchange + "_" + self.symbol.lower() + "_" + self.time_horizon.lower()
-        
-    def _get_interval(self):
-        # Translate common names to Bybit intervals
-        intervals = {
-            "1MINUTE": "1",
-            "3MINUTE": "3",
-            "5MINUTE": "5",
-            "15MINUTE": "15",
-            "30MINUTE": "30",
-            "1HOUR": "60",
-            "4HOUR": "240",
-            "DAILY": "D"
-        }
-        return intervals.get(self.time_horizon.upper(), "60")
+            except Exception as e:
+                print(f"❌ Error fetching OHLCV: {e}")
+                time.sleep(1)
+                continue
 
+        if not all_data:
+            print("No OHLCV data retrieved.")
+            return pd.DataFrame()
 
-    def get_bybit_bars(self, symbol, interval, startTime, endTime):
- 
-        url = "https://api.bybit.com/v5/market/kline"
-    
-        startTime = str(int(startTime.timestamp()))
-        endTime   = str(int(endTime.timestamp()))
-    
-        req_params = {"symbol" : symbol, 'interval' : interval, 'from' : startTime, 'to' : endTime}
-    
-        df = pd.DataFrame(json.loads(requests.get(url, params = req_params).text)['result'])
-    
-        if (len(df.index) == 0):
-            return None
-        df["datetime"] = pd.to_datetime(df["startTime"], unit="ms")
-        df.set_index("datetime", inplace=True)
-
-        
-    
+        df = pd.DataFrame(
+            all_data, columns=["timestamp", "open", "high", "low", "close", "volume"]
+        )
+        df["datetime"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
         return df
 
+    def interval_to_milliseconds(self, interval):
+        unit = interval[-1]
+        amount = int(interval[:-1])
+        if unit == "m":
+            return amount * 60 * 1000
+        elif unit == "h":
+            return amount * 60 * 60 * 1000
+        elif unit == "d":
+            return amount * 24 * 60 * 60 * 1000
+        else:
+            raise ValueError(f"Unsupported interval unit: {unit}")
 
-    def fetch_data(self):
-        df_list = []
-        last_datetime = self.start_date
+    def store_to_postgresql(
+        self, df: pd.DataFrame, db_params: dict, schema: str = "bybit_data"
+    ):
+        if df.empty:
+            print("No data to store in PostgreSQL.")
+            return
 
-        while True:
-            print(last_datetime)
-            new_df = self.get_bybit_bars(symbol=self.symbol+"USDT", interval=int(self._get_interval()), startTime=last_datetime, endTime=dt.datetime.now())
-            if new_df is None:
-                break
-            df_list.append(new_df)
-            last_datetime = max(new_df.index) + dt.timedelta(0, 1)
-        
-        df = pd.concat(df_list)
+        table_name = "btc_usdt_1min"
+        db_url = (
+            f"postgresql+psycopg2://{db_params['user']}:{db_params['password']}"
+            f"@{db_params['host']}:{db_params['port']}/{db_params['dbname']}"
+        )
+        engine = create_engine(db_url)
+        df_to_store = df[["datetime", "open", "high", "low", "close", "volume"]].copy()
+        df_to_store["datetime"] = pd.to_datetime(df_to_store["datetime"], utc=True)
 
-        df = pd.DataFrame(columns=[
-            "timestamp", "open", "high", "low", "close", "volume", "turnover"
-        ])
+        with engine.connect() as conn:
+            # Create schema and table if not exists
+            conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
+            conn.execute(
+                text(
+                    f"""
+                CREATE TABLE IF NOT EXISTS {schema}.{table_name} (
+                    datetime TIMESTAMPTZ PRIMARY KEY,
+                    open DOUBLE PRECISION,
+                    high DOUBLE PRECISION,
+                    low DOUBLE PRECISION,
+                    close DOUBLE PRECISION,
+                    volume DOUBLE PRECISION
+                )
+            """
+                )
+            )
 
-        df["datetime"] = pd.to_datetime(df["timestamp"], unit="ms")
-        df[["open", "high", "low", "close", "volume"]] = df[["open", "high", "low", "close", "volume"]].astype(float)
-        df = df[["datetime", "open", "high", "low", "close", "volume"]]
-        for col in ["open", "high", "low", "close", "volume"]:
-            df[col] = df[col].astype(float).round(2)
+            # Get last stored datetime
+            result = conn.execute(
+                text(f"SELECT MAX(datetime) FROM {schema}.{table_name}")
+            )
+            last_dt = result.scalar()
 
-        if self.end_date == "now":
-            df.drop(df.index[-1], inplace=True)
+        if last_dt:
+            df_to_store = df_to_store[df_to_store["datetime"] > last_dt]
 
-        conn = sqlite3.connect(self.db_name)
+        if df_to_store.empty:
+            print("No new candles to insert.")
+            return
 
-        df.to_sql(self.table_name, conn, if_exists='replace', index=False)
+        # Append only new rows
+        df_to_store.to_sql(
+            table_name,
+            engine,
+            schema=schema,
+            if_exists="append",
+            index=False,
+            method="multi",
+        )
+        print(f"✅ Appended {len(df_to_store)} new candles to {schema}.{table_name}")
 
-        return df
 
+if __name__ == "__main__":
+    db_params = {
+        "dbname": "postgres",
+        "user": "postgres",
+        "password": "123abc",
+        "host": "localhost",
+        "port": 5432,
+    }
 
-    def load_data_from_db(self):
-        """
-        Load data from the SQLite table into a DataFrame.
-        Returns:
-            pd.DataFrame: Loaded DataFrame from the table.
-        """
-        conn = sqlite3.connect(self.db_name)
-        query = f"SELECT * FROM {self.table_name}"
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-
-        # Ensure datetime column is parsed correctly
-        if 'datetime' in df.columns:
-            df['datetime'] = pd.to_datetime(df['datetime'], utc=True)
-
-        return df
-    
+    try:
+        dataFetcher = BybitDataFetcher()
+        print("📥 Fetching latest OHLCV data...")
+        ohlcv_df = dataFetcher.fetch_recent_data(
+            db_params, schema="bybit_data", table_name="btc_usdt_1min"
+        )
+        print("💾 Storing to PostgreSQL...")
+        dataFetcher.store_to_postgresql(ohlcv_df, db_params)
+    except Exception as e:
+        print(f"❌ Error in main execution: {e}")
